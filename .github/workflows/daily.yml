@@ -21,15 +21,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
 
       - run: pip install -r requirements.txt
 
+      # DAS ist der Schritt, der zaehlt. Schlaegt er fehl, wird der Lauf rot.
       - name: Signale rechnen und Telegram senden
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -37,10 +38,12 @@ jobs:
           STRATEGY_PARAMS: ${{ secrets.STRATEGY_PARAMS }}
         run: python daily_job.py
 
+      # Nur Kosmetik: haelt das Repository aktiv, damit GitHub den Zeitplan
+      # nicht nach 60 Tagen Inaktivitaet abschaltet. Scheitert dieser Schritt,
+      # darf das den Lauf NICHT rot faerben — deshalb continue-on-error.
       - name: Heartbeat committen
-        # GitHub deaktiviert geplante Workflows nach 60 Tagen ohne Repository-
-        # Aktivitaet. Dieser Commit haelt das Repo am Leben.
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p logs
           echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_number }} status=${{ job.status }}" >> logs/heartbeat.log
@@ -48,4 +51,11 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add logs/heartbeat.log
           git commit -m "heartbeat ${{ github.run_number }}" || exit 0
-          git push
+          # Wurde das Repo zwischenzeitlich veraendert (z. B. Bearbeitung im
+          # Browser waehrend des Laufs), erst die Fremdaenderungen holen.
+          for i in 1 2 3; do
+            git pull --rebase --autostash origin main && git push && exit 0
+            echo "Push-Versuch $i fehlgeschlagen, neuer Versuch..."
+            sleep 5
+          done
+          echo "Heartbeat konnte nicht gepusht werden — unkritisch."
