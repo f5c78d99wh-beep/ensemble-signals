@@ -1,0 +1,51 @@
+name: Ensemble Daily Signal
+
+on:
+  schedule:
+    # 00:37 UTC, ganzjaehrig. Zu diesem Zeitpunkt ist der BTC-Tagesbalken
+    # (Schluss 00:00 UTC) fertig UND die US-Boerse hat um 20:00/21:00 UTC
+    # geschlossen — beide gehoeren zum selben Handelstag.
+    # Krumme Minute mit Absicht: zur vollen Stunde sind die Warteschlangen voll.
+    - cron: "37 0 * * *"
+  workflow_dispatch:        # zum Testen von Hand ausloesbar
+
+permissions:
+  contents: write           # fuer den Heartbeat-Commit unten
+
+concurrency:
+  group: ensemble-daily
+  cancel-in-progress: false
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Signale rechnen und Telegram senden
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STRATEGY_PARAMS: ${{ secrets.STRATEGY_PARAMS }}
+        run: python daily_job.py
+
+      - name: Heartbeat committen
+        # GitHub deaktiviert geplante Workflows nach 60 Tagen ohne Repository-
+        # Aktivitaet. Dieser Commit haelt das Repo am Leben.
+        if: always()
+        run: |
+          mkdir -p logs
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_number }} status=${{ job.status }}" >> logs/heartbeat.log
+          git config user.name  "ensemble-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add logs/heartbeat.log
+          git commit -m "heartbeat ${{ github.run_number }}" || exit 0
+          git push
